@@ -358,6 +358,20 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
     return pd.DataFrame(final_rows)
 
 
+PORTAL_FEE_ADD_COLUMNS = [
+    "رسم خدمة",
+    "رسم المحليات",
+    "رسوم أخرى",
+    "ضريبة الدمغة النسبية",
+    "ضريبة الدمغة قطعية بمقدار ثابت.1",
+    "رسم تنمية الموارد.1",
+    "رسم خدمة.1",
+    "رسم المحليات.1",
+    "رسوم أخرى.1",
+]
+PORTAL_FEE_SUBTRACT_COLUMNS = ["خصم الفاتورة", "خصم الأصناف"]
+
+
 def compare_with_eta(stage1_df, eta_df):
     eta = eta_df.copy()
     eta["الرقم الضريبى للبائع"] = eta["الرقم الضريبى للبائع"].apply(clean_id)
@@ -387,20 +401,31 @@ def compare_with_eta(stage1_df, eta_df):
         if match is not None:
             def _num(v):
                 try:
-                    return float(v) if v not in (None, "") else 0.0
+                    if v is None or v == "":
+                        return 0.0
+                    f = float(v)
+                    return 0.0 if pd.isna(f) else f
                 except (TypeError, ValueError):
                     return 0.0
 
             eta_total = _num(match.get("إجمالى الفاتورة"))
             eta_sales = _num(match.get("إجمالى المبيعات"))
             eta_vat = _num(match.get("ضريبة القيمة المضافة"))
+            portal_fees = round(
+                sum(_num(match.get(c)) for c in PORTAL_FEE_ADD_COLUMNS)
+                - sum(_num(match.get(c)) for c in PORTAL_FEE_SUBTRACT_COLUMNS),
+                2,
+            )
 
             result["Match Status"] = "Matched"
             result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
             result["إجمالى المبيعات"] = eta_sales
             result["ضريبة القيمة المضافة"] = eta_vat
             result["ETA Invoice Total"] = eta_total
-            result["COGS vs إجمالى المبيعات (Difference)"] = round(_num(result["COGS"]) - eta_sales, 2)
+            result["Portal Fees & Deductions"] = portal_fees
+            result["COGS vs إجمالى المبيعات (Difference)"] = round(
+                _num(result["COGS"]) - (eta_sales + portal_fees), 2
+            )
             result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"] = round(
                 _num(result["SUPPLIERS VAT"]) - eta_vat, 2
             )
@@ -411,6 +436,7 @@ def compare_with_eta(stage1_df, eta_df):
             result["إجمالى المبيعات"] = ""
             result["ضريبة القيمة المضافة"] = ""
             result["ETA Invoice Total"] = ""
+            result["Portal Fees & Deductions"] = ""
             result["COGS vs إجمالى المبيعات (Difference)"] = ""
             result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"] = ""
             result["Amount Difference"] = ""
@@ -474,7 +500,7 @@ if "final_df" in st.session_state:
     display_cols = [
         "Vendor Account", "Tax ID", "Sales Invoice",
         "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)", "Vendor Invoice No (Portal Matched)",
-        "COGS", "إجمالى المبيعات", "COGS vs إجمالى المبيعات (Difference)",
+        "COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)",
         "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
         "Vendor Invoice Total", "ETA Invoice Total", "Amount Difference",
         "Match Status",
