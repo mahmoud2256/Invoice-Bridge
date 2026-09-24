@@ -237,6 +237,7 @@ def load_any_excel(uploaded_file):
 # Core processing
 # --------------------------------------------------------------------------
 def process_voucher_transactions(df):
+    """Line-level amounts per (Sales Invoice, Vendor Account) - before re-grouping by vendor invoice no."""
     df = df.copy()
     df["Main account"] = df["Main account"].apply(clean_id)
     df["Vendor account"] = df["Vendor account"].apply(clean_id)
@@ -256,7 +257,7 @@ def process_voucher_transactions(df):
         lambda v: "" if is_placeholder_invoice(v) else v
     )
 
-    groups = []
+    rows = []
     for (sales_inv, vendor_acc), g in df.groupby(["Sales Invoice", "Vendor account"]):
         vendor_total = abs(g.loc[g["Main account"] == ACCOUNT_VENDOR_TOTAL, "Amount in transaction currency"].sum())
         vat_amount = abs(g.loc[g["Main account"] == ACCOUNT_VAT, "Amount in transaction currency"].sum())
@@ -265,22 +266,18 @@ def process_voucher_transactions(df):
         voucher_invoice_candidates = [v for v in g["Vendor Invoice (Voucher)"] if v]
         voucher_invoice_no = voucher_invoice_candidates[0] if voucher_invoice_candidates else ""
 
-        groups.append(
+        rows.append(
             {
                 "Sales Invoice": sales_inv,
                 "Vendor Account": vendor_acc,
                 "Sales Amount": round(sales_amount, 2),
                 "VAT Amount": round(vat_amount, 2),
-                "Vendor Invoice Total (Calculated)": round(vendor_total, 2),
+                "Vendor Invoice Total": round(vendor_total, 2),
                 "Vendor Invoice No (Voucher)": voucher_invoice_no,
             }
         )
 
-    result_df = pd.DataFrame(groups)
-    # keep only groups that actually carry a vendor payable amount (21020102) -
-    # rows with only COGS lines and no payable/VAT line are not standalone vendor invoices
-    result_df = result_df[result_df["Vendor Invoice Total (Calculated)"] != 0].reset_index(drop=True)
-    return result_df
+    return pd.DataFrame(rows)
 
 
 def build_payment_lookup(df):
@@ -310,26 +307,55 @@ def build_masterdata_lookup(df):
 
 
 def build_stage1_output(voucher_df, payments_df, masterdata_df):
-    grouped = process_voucher_transactions(voucher_df)
+    line_level = process_voucher_transactions(voucher_df)
     payment_lookup = build_payment_lookup(payments_df)
     tax_id_lookup = build_masterdata_lookup(masterdata_df)
 
-    grouped["Vendor Invoice No (Payment)"] = grouped.apply(
+    line_level["Vendor Invoice No (Payment)"] = line_level.apply(
         lambda r: payment_lookup.get((r["Sales Invoice"], r["Vendor Account"]), ""), axis=1
     )
-    grouped["Tax ID"] = grouped["Vendor Account"].apply(lambda v: tax_id_lookup.get(v, ""))
 
-    cols = [
-        "Vendor Account",
-        "Tax ID",
-        "Sales Invoice",
-        "Vendor Invoice No (Voucher)",
-        "Vendor Invoice No (Payment)",
-        "Sales Amount",
-        "VAT Amount",
-        "Vendor Invoice Total (Calculated)",
-    ]
-    return grouped[cols]
+    # Effective invoice number used to re-group lines that belong to the same
+    # vendor invoice but were split across several of our sales invoices.
+    def effective_invoice_no(r):
+        if r["Vendor Invoice No (Voucher)"]:
+            return r["Vendor Invoice No (Voucher)"]
+        if r["Vendor Invoice No (Payment)"]:
+            return r["Vendor Invoice No (Payment)"]
+        return ""
+
+    line_level["Effective Invoice No"] = line_level.apply(effective_invoice_no, axis=1)
+
+    # Group key: known vendor invoice no -> merge across sales invoices.
+    # Unknown vendor invoice no -> keep each (Sales Invoice, Vendor) separate.
+    def group_key(r):
+        if r["Effective Invoice No"]:
+            return (r["Effective Invoice No"], r["Vendor Account"])
+        return (f"__NOINV__{r['Sales Invoice']}", r["Vendor Account"])
+
+    line_level["Group Key"] = line_level.apply(group_key, axis=1)
+
+    final_rows = []
+    for _, g in line_level.groupby("Group Key"):
+        vendor_acc = g["Vendor Account"].iloc[0]
+        sales_invoices = "/".join(dict.fromkeys(g["Sales Invoice"]))
+        voucher_nos = [v for v in g["Vendor Invoice No (Voucher)"] if v]
+        payment_nos = [v for v in g["Vendor Invoice No (Payment)"] if v]
+
+        final_rows.append(
+            {
+                "Vendor Account": vendor_acc,
+                "Tax ID": tax_id_lookup.get(vendor_acc, ""),
+                "Sales Invoice": sales_invoices,
+                "Vendor Invoice No (Voucher)": voucher_nos[0] if voucher_nos else "",
+                "Vendor Invoice No (Payment)": payment_nos[0] if payment_nos else "",
+                "COGS": round(g["Sales Amount"].sum(), 2),
+                "SUPPLIERS VAT": round(g["VAT Amount"].sum(), 2),
+                "Vendor Invoice Total": round(g["Vendor Invoice Total"].sum(), 2),
+            }
+        )
+
+    return pd.DataFrame(final_rows)
 
 
 def compare_with_eta(stage1_df, eta_df):
@@ -370,21 +396,23 @@ def compare_with_eta(stage1_df, eta_df):
             eta_vat = _num(match.get("ضريبة القيمة المضافة"))
 
             result["Match Status"] = "Matched"
-            result["Matched Invoice No"] = matched_invoice_no
-            result["ETA Sales Amount"] = eta_sales
-            result["ETA VAT Amount"] = eta_vat
+            result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
+            result["إجمالى المبيعات"] = eta_sales
+            result["ضريبة القيمة المضافة"] = eta_vat
             result["ETA Invoice Total"] = eta_total
-            result["Sales Amount Difference"] = round(_num(result["Sales Amount"]) - eta_sales, 2)
-            result["VAT Amount Difference"] = round(_num(result["VAT Amount"]) - eta_vat, 2)
-            result["Amount Difference"] = round(_num(result["Vendor Invoice Total (Calculated)"]) - eta_total, 2)
+            result["COGS vs إجمالى المبيعات (Difference)"] = round(_num(result["COGS"]) - eta_sales, 2)
+            result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"] = round(
+                _num(result["SUPPLIERS VAT"]) - eta_vat, 2
+            )
+            result["Amount Difference"] = round(_num(result["Vendor Invoice Total"]) - eta_total, 2)
         else:
             result["Match Status"] = "Not Found in Portal"
-            result["Matched Invoice No"] = ""
-            result["ETA Sales Amount"] = ""
-            result["ETA VAT Amount"] = ""
+            result["Vendor Invoice No (Portal Matched)"] = ""
+            result["إجمالى المبيعات"] = ""
+            result["ضريبة القيمة المضافة"] = ""
             result["ETA Invoice Total"] = ""
-            result["Sales Amount Difference"] = ""
-            result["VAT Amount Difference"] = ""
+            result["COGS vs إجمالى المبيعات (Difference)"] = ""
+            result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"] = ""
             result["Amount Difference"] = ""
         results.append(result)
 
@@ -445,10 +473,10 @@ if "final_df" in st.session_state:
 
     display_cols = [
         "Vendor Account", "Tax ID", "Sales Invoice",
-        "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)", "Matched Invoice No",
-        "Sales Amount", "ETA Sales Amount", "Sales Amount Difference",
-        "VAT Amount", "ETA VAT Amount", "VAT Amount Difference",
-        "Vendor Invoice Total (Calculated)", "ETA Invoice Total", "Amount Difference",
+        "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)", "Vendor Invoice No (Portal Matched)",
+        "COGS", "إجمالى المبيعات", "COGS vs إجمالى المبيعات (Difference)",
+        "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
+        "Vendor Invoice Total", "ETA Invoice Total", "Amount Difference",
         "Match Status",
     ]
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
