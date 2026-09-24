@@ -24,82 +24,93 @@ st.set_page_config(page_title="Invoice Bridge", page_icon="🌉", layout="wide")
 CUSTOM_CSS = """
 <style>
 .stApp {
-    background-color: #1b1035;
-    color: #f5f3fb;
+    background-color: #0f1420;
+    color: #e8ecf5;
 }
 section[data-testid="stSidebar"] {
-    background-color: #241448;
+    background-color: #161d2e;
+    border-right: 1px solid #232c42;
 }
 section[data-testid="stSidebar"] * {
-    color: #f5f3fb !important;
+    color: #e8ecf5 !important;
 }
 h1, h2, h3 {
-    color: #7fe7d8 !important;
+    color: #35d0c0 !important;
+    font-weight: 700;
 }
 p, span, label, li, div {
-    color: #f5f3fb;
+    color: #e8ecf5;
+}
+[data-testid="stMetric"] {
+    background-color: #161d2e;
+    border: 1px solid #232c42;
+    border-radius: 10px;
+    padding: 14px 16px;
 }
 [data-testid="stMetricValue"] {
-    color: #7fe7d8 !important;
+    color: #35d0c0 !important;
     font-weight: 700;
 }
 [data-testid="stMetricLabel"] {
-    color: #f5f3fb !important;
+    color: #9aa4bf !important;
 }
 div.stButton > button {
-    background-color: #ff8a3d;
-    color: #1b1035 !important;
+    background-color: #f97316;
+    color: #0f1420 !important;
     font-weight: 700;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
 }
 div.stButton > button p {
-    color: #1b1035 !important;
+    color: #0f1420 !important;
 }
 div.stButton > button:hover {
-    background-color: #ffa563;
-    color: #1b1035 !important;
+    background-color: #fb923c;
+    color: #0f1420 !important;
 }
 .stDownloadButton > button {
-    background-color: #7fe7d8;
-    color: #1b1035 !important;
+    background-color: #35d0c0;
+    color: #0f1420 !important;
     font-weight: 700;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
 }
 .stDownloadButton > button p {
-    color: #1b1035 !important;
+    color: #0f1420 !important;
 }
 [data-testid="stFileUploaderDropzone"] {
-    background-color: #2c1a57;
-    border: 1px solid #7fe7d8;
+    background-color: #161d2e;
+    border: 1px dashed #35d0c0;
+    border-radius: 8px;
 }
 [data-testid="stFileUploaderDropzone"] * {
-    color: #f5f3fb !important;
+    color: #e8ecf5 !important;
 }
 div[data-baseweb="input"] input {
-    background-color: #2c1a57;
-    color: #f5f3fb !important;
+    background-color: #161d2e;
+    color: #e8ecf5 !important;
 }
 div[data-baseweb="select"] * {
-    color: #1b1035 !important;
+    color: #0f1420 !important;
 }
-.stDataFrame {
-    background-color: #2c1a57;
+.stDataFrame, [data-testid="stDataFrame"] {
+    background-color: #161d2e;
+    border: 1px solid #232c42;
+    border-radius: 8px;
 }
 .banner {
-    background-color: #2c1a57;
-    padding: 14px 20px;
-    border-radius: 8px;
-    border-left: 5px solid #7fe7d8;
-    margin-bottom: 18px;
+    background: linear-gradient(90deg, #161d2e 0%, #1a2338 100%);
+    padding: 18px 24px;
+    border-radius: 10px;
+    border-left: 5px solid #35d0c0;
+    margin-bottom: 20px;
 }
 .banner p {
-    color: #d9d3ee !important;
+    color: #9aa4bf !important;
 }
 .footer-credit {
     text-align: center;
-    color: #b7aede;
+    color: #6b7590;
     font-size: 13px;
     margin-top: 40px;
 }
@@ -515,27 +526,87 @@ if "final_df" in st.session_state:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         final_df.to_excel(writer, index=False, sheet_name="Reconciliation")
-        workbook = writer.book
         ws = writer.sheets["Reconciliation"]
-        header_fill_color = "7FE7D8"
-        from openpyxl.styles import PatternFill, Font
 
-        header_fill = PatternFill(start_color=header_fill_color, end_color=header_fill_color, fill_type="solid")
-        header_font = Font(bold=True, color="1B1035")
-        for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = header_font
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        # column groups -> (header color, body tint)
+        ID_COLS = {
+            "Vendor Account", "Tax ID", "Sales Invoice",
+            "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)",
+            "Vendor Invoice No (Portal Matched)",
+        }
+        COGS_COLS = {"COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)"}
+        VAT_COLS = {"SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"}
+        TOTAL_COLS = {"Vendor Invoice Total", "ETA Invoice Total", "Amount Difference"}
+        STATUS_COLS = {"Match Status"}
+
+        GROUP_COLORS = {
+            "id": ("2B3350", "EEF1F8"),
+            "cogs": ("1F5F73", "DCEFF3"),
+            "vat": ("5B3E82", "EAE1F5"),
+            "total": ("2F6B4F", "DFF3E7"),
+            "status": ("6B3B22", "FBE7DA"),
+        }
+
+        def group_of(col_name):
+            if col_name in ID_COLS:
+                return "id"
+            if col_name in COGS_COLS:
+                return "cogs"
+            if col_name in VAT_COLS:
+                return "vat"
+            if col_name in TOTAL_COLS:
+                return "total"
+            if col_name in STATUS_COLS:
+                return "status"
+            return "id"
+
+        thin_border = Border(*[Side(style="thin", color="D8DEE9")] * 4)
+        columns = list(final_df.columns)
+
+        # header row
+        for idx, col_name in enumerate(columns, start=1):
+            header_hex, _ = GROUP_COLORS[group_of(col_name)]
+            cell = ws.cell(row=1, column=idx)
+            cell.fill = PatternFill(start_color=header_hex, end_color=header_hex, fill_type="solid")
+            cell.font = Font(bold=True, color="FFFFFF", size=11)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = thin_border
+        ws.row_dimensions[1].height = 30
+
         matched_fill = PatternFill(start_color="DFF5E9", end_color="DFF5E9", fill_type="solid")
-        notfound_fill = PatternFill(start_color="FCE3D6", end_color="FCE3D6", fill_type="solid")
-        status_col_idx = list(final_df.columns).index("Match Status") + 1
+        notfound_fill = PatternFill(start_color="FBE7DA", end_color="FBE7DA", fill_type="solid")
+        status_col_idx = columns.index("Match Status") + 1
+
+        numeric_cols = set(columns) - ID_COLS - STATUS_COLS
+        numeric_col_idx = {columns.index(c) + 1 for c in numeric_cols}
+
         for row_idx in range(2, ws.max_row + 1):
             status_val = ws.cell(row=row_idx, column=status_col_idx).value
-            fill = matched_fill if status_val == "Matched" else notfound_fill
-            for col_idx in range(1, ws.max_column + 1):
-                ws.cell(row=row_idx, column=col_idx).fill = fill
-        for column_cells in ws.columns:
-            length = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
-            ws.column_dimensions[column_cells[0].column_letter].width = min(max(length + 2, 10), 40)
+            row_tint_override = matched_fill if status_val == "Matched" else notfound_fill
+            for col_idx, col_name in enumerate(columns, start=1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.border = thin_border
+                if col_name in STATUS_COLS:
+                    cell.fill = row_tint_override
+                    cell.font = Font(bold=True, color="1F6B45" if status_val == "Matched" else "A34A1F")
+                else:
+                    _, tint = GROUP_COLORS[group_of(col_name)]
+                    cell.fill = PatternFill(start_color=tint, end_color=tint, fill_type="solid")
+                if col_idx in numeric_col_idx and isinstance(cell.value, (int, float)):
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = Alignment(horizontal="right")
+
+        # column widths
+        for idx, col_name in enumerate(columns, start=1):
+            letter = get_column_letter(idx)
+            max_len = max([len(str(col_name))] + [len(str(v)) for v in final_df[col_name].astype(str)])
+            ws.column_dimensions[letter].width = min(max(max_len + 3, 12), 34)
+
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
 
     st.download_button(
         "Download Excel report",
