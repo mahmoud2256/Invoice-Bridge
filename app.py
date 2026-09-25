@@ -19,11 +19,11 @@ import streamlit as st
 # --------------------------------------------------------------------------
 # Page config & style
 # --------------------------------------------------------------------------
-st.set_page_config(page_title="Invoice Bridge", page_icon="🌉", layout="wide")
+st.set_page_config(page_title="Invoice Bridge", page_icon="🧾", layout="wide")
 
 CUSTOM_CSS = """
 <style>
-/* ===== Invoice Bridge - Professional Theme ===== */
+/* ===== Invoice Bridge - Professional Fixed Theme ===== */
 .stApp {
     background-color: #0F172A;
     color: #F1F5F9;
@@ -40,15 +40,11 @@ h1, h2, h3 {
     font-weight: 700;
     letter-spacing: -0.02em;
 }
-h1 {
-    background: linear-gradient(90deg, #3B82F6 0%, #06B6D4 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
 p, span, label, li, div {
     color: #F1F5F9;
 }
+
+/* Metrics */
 [data-testid="stMetric"] {
     background-color: #1E293B;
     border: 1px solid #334155;
@@ -56,122 +52,145 @@ p, span, label, li, div {
     padding: 16px 18px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
-[data-testid="stMetricValue"] {
-    color: #38BDF8 !important;
-    font-weight: 700;
-}
-[data-testid="stMetricLabel"] {
-    color: #94A3B8 !important;
-    font-size: 13px;
-}
-div.stButton > button {
-    background: linear-gradient(90deg, #3B82F6 0%, #2563EB 100%);
-    color: #FFFFFF !important;
-    font-weight: 600;
-    border: none;
-    border-radius: 10px;
-    transition: all 0.2s ease;
-    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
-}
-div.stButton > button p {
-    color: #FFFFFF !important;
-}
-div.stButton > button:hover {
-    background: linear-gradient(90deg, #2563EB 0%, #1D4ED8 100%);
-    color: #FFFFFF !important;
-    box-shadow: 0 6px 10px -1px rgba(59, 130, 246, 0.4);
-    transform: translateY(-1px);
-}
-/* Log out button - secondary style */
-section[data-testid="stSidebar"] div.stButton > button {
-    background: #1E293B !important;
-    border: 1px solid #334155 !important;
-    box-shadow: none !important;
-}
-section[data-testid="stSidebar"] div.stButton > button:hover {
-    background: #EF4444 !important;
-    border-color: #EF4444 !important;
-    color: white !important;
-}
-.stDownloadButton > button {
-    background: linear-gradient(90deg, #06B6D4 0%, #0891B2 100%) !important;
-    color: #FFFFFF !important;
-    font-weight: 600;
-    border: none;
-    border-radius: 10px;
-    box-shadow: 0 4px 6px -1px rgba(6, 182, 214, 0.3);
-}
-.stDownloadButton > button p {
-    color: #FFFFFF !important;
-}
-.stDownloadButton > button:hover {
-    background: linear-gradient(90deg, #0891B2 0%, #0E7490 100%) !important;
-}
+[data-testid="stMetricValue"] { color: #38BDF8 !important; font-weight: 700; }
+[data-testid="stMetricLabel"] { color: #94A3B8 !important; font-size: 13px; }
+
+/* ===== FIX WHITE BOXES - File Uploader Button ===== */
 [data-testid="stFileUploaderDropzone"] {
     background-color: #1E293B;
     border: 1.5px dashed #3B82F6;
     border-radius: 12px;
-    transition: all 0.2s ease;
 }
-[data-testid="stFileUploaderDropzone"]:hover {
-    background-color: #1E293B;
-    border-color: #38BDF8;
-    background: rgba(59, 130, 246, 0.05);
+[data-testid="stFileUploader"] button,
+[data-testid="stFileUploaderDropzone"] button,
+div[data-testid="stFileUploader"] > div > button {
+    background-color: #F8FAFC !important;
+    color: #0F172A !important;
+    border: 1px solid #CBD5E1 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
 }
-[data-testid="stFileUploaderDropzone"] * {
-    color: #CBD5E1 !important;
+[data-testid="stFileUploader"] button p,
+[data-testid="stFileUploader"] button div,
+[data-testid="stFileUploader"] button span,
+[data-testid="stFileUploaderDropzone"] button p,
+[data-testid="stFileUploaderDropzone"] button span {
+    color: #0F172A !important;
 }
+[data-testid="stFileUploader"] button:hover {
+    background-color: #FFFFFF !important;
+    border-color: #3B82F6 !important;
+    color: #0F172A !important;
+}
+
+/* ===== FIX LOGIN BUTTON ===== */
+div.stButton > button,
+[data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(90deg, #3B82F6 0%, #2563EB 100%) !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 6px -1px rgba(59,130,246,0.3) !important;
+}
+div.stButton > button p,
+div.stButton > button div,
+div.stButton > button span,
+[data-testid="stFormSubmitButton"] button p,
+[data-testid="stFormSubmitButton"] button div,
+[data-testid="stFormSubmitButton"] button span {
+    color: #FFFFFF !important;
+}
+div.stButton > button:hover,
+[data-testid="stFormSubmitButton"] button:hover {
+    background: linear-gradient(90deg, #2563EB 0%, #1D4ED8 100%) !important;
+    transform: translateY(-1px);
+}
+
+/* Log out button - secondary */
+section[data-testid="stSidebar"] div.stButton > button {
+    background: #1E293B !important;
+    border: 1px solid #334155 !important;
+    box-shadow: none !important;
+    color: #F1F5F9 !important;
+}
+section[data-testid="stSidebar"] div.stButton > button p {
+    color: #F1F5F9 !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover {
+    background: #EF4444 !important;
+    border-color: #EF4444 !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover p {
+    color: white !important;
+}
+
+/* Download button */
+.stDownloadButton > button {
+    background: linear-gradient(90deg, #06B6D4 0%, #0891B2 100%) !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+    border: none !important;
+    border-radius: 10px !important;
+}
+.stDownloadButton > button p { color: #FFFFFF !important; }
+
+/* Inputs */
 div[data-baseweb="input"] input {
     background-color: #1E293B;
     color: #F1F5F9 !important;
     border-radius: 8px;
 }
-div[data-baseweb="select"] * {
-    color: #0F172A !important;
-}
+div[data-baseweb="select"] * { color: #0F172A !important; }
+
+/* Dataframe */
 .stDataFrame, [data-testid="stDataFrame"] {
     background-color: #1E293B;
     border: 1px solid #334155;
     border-radius: 12px;
 }
+
+/* Banner */
 .banner {
     background: linear-gradient(135deg, #1E293B 0%, #162032 50%, #1E293B 100%);
-    padding: 20px 26px;
-    border-radius: 12px;
+    padding: 22px 28px;
+    border-radius: 14px;
     border-left: 4px solid #3B82F6;
     border-top: 1px solid rgba(59, 130, 246, 0.2);
     margin-bottom: 24px;
-    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    gap: 16px;
 }
-.banner h2 {
+.banner-logo {
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(59,130,246,0.3);
+}
+.banner-title {
+    font-size: 28px;
+    font-weight: 800;
     color: #F8FAFC !important;
+    letter-spacing: -0.02em;
     margin: 0;
 }
-.banner p {
+.banner-subtitle {
     color: #94A3B8 !important;
-    margin-top: 6px;
+    font-size: 14px;
+    margin: 4px 0 0 0;
 }
+
 .footer-credit {
     text-align: center;
     color: #64748B;
     font-size: 13px;
     margin-top: 48px;
-    letter-spacing: 0.02em;
-}
-/* Scrollbar */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-::-webkit-scrollbar-track {
-    background: #0F172A;
-}
-::-webkit-scrollbar-thumb {
-    background: #334155;
-    border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: #475569;
 }
 </style>
 """
@@ -186,11 +205,22 @@ USERS = {
 
 
 def login_screen():
-    st.markdown("<h1 style='text-align:center;'>🌉 Invoice Bridge</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p style='text-align:center;color:#8f86ad;'>Supplier ledger &amp; ETA portal reconciliation</p>",
-        unsafe_allow_html=True,
-    )
+    # New Professional Logo
+    st.markdown("""
+    <div style='text-align:center; margin: 30px 0 20px 0;'>
+        <div style='width:72px; height:72px; background: linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%); border-radius:18px; display:inline-flex; align-items:center; justify-content:center; box-shadow: 0 8px 20px rgba(59,130,246,0.35);'>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" fill="white" fill-opacity="0.95"/>
+                <path d="M14 2V8H20" fill="#DBEAFE" stroke="white" stroke-width="1.2" stroke-linejoin="round"/>
+                <path d="M8 13H16M8 17H13" stroke="#3B82F6" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="17" cy="17" r="3.5" fill="#06B6D4" stroke="#0F172A" stroke-width="1.5"/>
+                <path d="M15.8 17L16.9 18.1L18.5 16.2" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+        <h1 style='text-align:center; margin:16px 0 6px 0; background: linear-gradient(90deg, #3B82F6 0%, #06B6D4 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; font-weight:800; font-size:32px;'>Invoice Bridge</h1>
+        <p style='text-align:center; color:#94A3B8; font-size:15px; margin:0;'>Supplier ledger &amp; ETA portal reconciliation</p>
+    </div>
+    """, unsafe_allow_html=True)
     with st.form("login_form"):
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
@@ -519,8 +549,23 @@ def compare_with_eta(stage1_df, eta_df):
 # UI
 # --------------------------------------------------------------------------
 st.markdown(
-    "<div class='banner'><h1 style='margin:0;'>🌉 Invoice Bridge</h1>"
-    "<p style='margin:4px 0 0 0;color:#c9c2e8;'>Supplier ledger reconciliation against the ETA e-invoice portal</p></div>",
+    """
+    <div class='banner'>
+        <div class='banner-logo'>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" fill="white" fill-opacity="0.95"/>
+                <path d="M14 2V8H20" fill="#DBEAFE" stroke="white" stroke-width="1.2" stroke-linejoin="round"/>
+                <path d="M8 13H16M8 17H13" stroke="#3B82F6" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="17" cy="17" r="3.5" fill="#06B6D4" stroke="#0F172A" stroke-width="1.2"/>
+                <path d="M15.8 17L16.9 18.1L18.5 16.2" stroke="white" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </div>
+        <div>
+            <div class='banner-title'>Invoice Bridge</div>
+            <p class='banner-subtitle'>Supplier ledger reconciliation against the ETA e-invoice portal</p>
+        </div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
