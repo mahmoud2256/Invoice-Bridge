@@ -342,6 +342,7 @@ def process_voucher_transactions(df):
     df["Main account"] = df["Main account"].apply(clean_id)
     df["Vendor account"] = df["Vendor account"].apply(clean_id)
     df["Document"] = df["Document"].apply(clean_str)
+    df["Voucher"] = df["Voucher"].apply(clean_str)
     df["Amount in transaction currency"] = pd.to_numeric(
         df["Amount in transaction currency"], errors="coerce"
     ).fillna(0)
@@ -366,6 +367,13 @@ def process_voucher_transactions(df):
         voucher_invoice_candidates = [v for v in g["Vendor Invoice (Voucher)"] if v]
         voucher_invoice_no = voucher_invoice_candidates[0] if voucher_invoice_candidates else ""
 
+        # Journal "Voucher" numbers (e.g. "Tina-00000000140561") tied to this
+        # Sales Invoice / Vendor pair - used below to look up the Payments
+        # file. The suffix after "/" in "Document" (e.g. 3210001161) is an
+        # internal Service_ID, not the same key used in the Payments file, so
+        # it is never used to look up the payment reference.
+        vouchers_in_group = list(dict.fromkeys(v for v in g["Voucher"] if v))
+
         rows.append(
             {
                 "Sales Invoice": sales_inv,
@@ -374,6 +382,7 @@ def process_voucher_transactions(df):
                 "VAT Amount": round(vat_amount, 2),
                 "Vendor Invoice Total": round(vendor_total, 2),
                 "Vendor Invoice No (Voucher)": voucher_invoice_no,
+                "Vouchers": vouchers_in_group,
             }
         )
 
@@ -381,21 +390,25 @@ def process_voucher_transactions(df):
 
 
 def build_payment_lookup(df):
-    df = df.copy()
-    df["Vendor account"] = df["Vendor account"].apply(clean_id)
-    df["Invoice"] = df["Invoice"].apply(clean_str)
-    df["Payment reference"] = df["Payment reference"].apply(clean_str)
+    """Map Voucher -> Payment reference from the Payments / Vendor Transactions file.
 
-    df["Sales Invoice"] = df["Invoice"].apply(lambda v: v.split("/")[0] if v else "")
+    The match key is the "Voucher" column (e.g. "Tina-00000000140561"), which
+    is shared with the General Journal ("Voucher Transactions") file. The
+    number after "/" in this file's own "Invoice" column is a Service_ID, not
+    a vendor invoice number, so it is never used as a lookup key.
+    """
+    df = df.copy()
+    df["Voucher"] = df["Voucher"].apply(clean_str)
+    df["Payment reference"] = df["Payment reference"].apply(clean_str)
 
     lookup = {}
     for _, row in df.iterrows():
+        voucher = row["Voucher"]
         ref = row["Payment reference"]
-        if not ref or is_placeholder_invoice(ref):
+        if not voucher or not ref or is_placeholder_invoice(ref):
             continue
-        key = (row["Sales Invoice"], row["Vendor account"])
-        if key not in lookup:
-            lookup[key] = ref
+        if voucher not in lookup:
+            lookup[voucher] = ref
     return lookup
 
 
@@ -411,9 +424,13 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
     payment_lookup = build_payment_lookup(payments_df)
     tax_id_lookup = build_masterdata_lookup(masterdata_df)
 
-    line_level["Vendor Invoice No (Payment)"] = line_level.apply(
-        lambda r: payment_lookup.get((r["Sales Invoice"], r["Vendor Account"]), ""), axis=1
-    )
+    def lookup_payment(vouchers):
+        for v in vouchers:
+            if v in payment_lookup:
+                return payment_lookup[v]
+        return ""
+
+    line_level["Vendor Invoice No (Payment)"] = line_level["Vouchers"].apply(lookup_payment)
 
     # Effective invoice number used to re-group lines that belong to the same
     # vendor invoice but were split across several of our sales invoices.
