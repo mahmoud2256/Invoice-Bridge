@@ -434,11 +434,14 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
 
     # Effective invoice number used to re-group lines that belong to the same
     # vendor invoice but were split across several of our sales invoices.
+    # Payment reference (the vendor's real, consolidated invoice/payment
+    # number) takes priority over the per-line Voucher-based number, since
+    # one vendor invoice/payment can cover several of our sales invoices.
     def effective_invoice_no(r):
-        if r["Vendor Invoice No (Voucher)"]:
-            return r["Vendor Invoice No (Voucher)"]
         if r["Vendor Invoice No (Payment)"]:
             return r["Vendor Invoice No (Payment)"]
+        if r["Vendor Invoice No (Voucher)"]:
+            return r["Vendor Invoice No (Voucher)"]
         return ""
 
     line_level["Effective Invoice No"] = line_level.apply(effective_invoice_no, axis=1)
@@ -456,7 +459,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
     for _, g in line_level.groupby("Group Key"):
         vendor_acc = g["Vendor Account"].iloc[0]
         sales_invoices = "/".join(dict.fromkeys(g["Sales Invoice"]))
-        voucher_nos = [v for v in g["Vendor Invoice No (Voucher)"] if v]
+        voucher_nos = list(dict.fromkeys(v for v in g["Vendor Invoice No (Voucher)"] if v))
         payment_nos = [v for v in g["Vendor Invoice No (Payment)"] if v]
 
         final_rows.append(
@@ -464,7 +467,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
                 "Vendor Account": vendor_acc,
                 "Tax ID": tax_id_lookup.get(vendor_acc, ""),
                 "Sales Invoice": sales_invoices,
-                "Vendor Invoice No (Voucher)": voucher_nos[0] if voucher_nos else "",
+                "Vendor Invoice No (Voucher)": "/".join(voucher_nos),
                 "Vendor Invoice No (Payment)": payment_nos[0] if payment_nos else "",
                 "COGS": round(g["Sales Amount"].sum(), 2),
                 "SUPPLIERS VAT": round(g["VAT Amount"].sum(), 2),
