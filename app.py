@@ -488,6 +488,8 @@ PORTAL_FEE_ADD_COLUMNS = [
     "رسم خدمة.1",
     "رسم المحليات.1",
     "رسوم أخرى.1",
+    # Added as-is (sign preserved): a negative value reduces the total.
+    "الخصم تحت حساب الضريبة",
 ]
 PORTAL_FEE_SUBTRACT_COLUMNS = ["خصم الفاتورة", "خصم الأصناف"]
 
