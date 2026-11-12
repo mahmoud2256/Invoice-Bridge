@@ -386,7 +386,18 @@ def process_voucher_transactions(df):
             }
         )
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "Sales Invoice",
+            "Vendor Account",
+            "Sales Amount",
+            "VAT Amount",
+            "Vendor Invoice Total",
+            "Vendor Invoice No (Voucher)",
+            "Vouchers",
+        ],
+    )
 
 
 def build_payment_lookup(df):
@@ -556,15 +567,10 @@ def compare_with_eta(stage1_df, eta_df):
             )
             result["Amount Difference"] = round(_num(result["Vendor Invoice Total"]) - eta_total, 2)
 
-            # "Matched" only when every difference is within the tolerance
-            # (up to 10 either way); otherwise the invoice was found in the
-            # portal but its amounts differ.
-            diffs = [
-                result["COGS vs إجمالى المبيعات (Difference)"],
-                result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"],
-                result["Amount Difference"],
-            ]
-            if any(abs(d) > MATCH_TOLERANCE for d in diffs):
+            # "Matched" when the invoice total difference is within the
+            # tolerance (up to 10 either way); the COGS and VAT differences
+            # are shown in their own columns but do not change the status.
+            if abs(result["Amount Difference"]) > MATCH_TOLERANCE:
                 result["Match Status"] = "Difference"
         else:
             result["Match Status"] = "Not Found in Portal"
@@ -630,6 +636,14 @@ if run_btn:
         eta_df = pd.read_excel(io.BytesIO(eta_file.getvalue()), sheet_name="جميع الفواتير")
 
     with st.spinner("Building system-side reconciliation..."):
+        if process_voucher_transactions(voucher_df).empty:
+            st.error(
+                "No rows found in the Voucher Transactions file for the required "
+                "accounts (21020102, 21030309, 32000001-32000004 with a Vendor "
+                "account). Please check that the correct file was uploaded for "
+                "this period."
+            )
+            st.stop()
         stage1_df = build_stage1_output(voucher_df, payments_df, masterdata_df)
 
     with st.spinner("Comparing against ETA portal..."):
