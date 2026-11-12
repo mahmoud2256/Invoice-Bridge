@@ -493,6 +493,9 @@ PORTAL_FEE_ADD_COLUMNS = [
 ]
 PORTAL_FEE_SUBTRACT_COLUMNS = ["خصم الفاتورة", "خصم الأصناف"]
 
+# Differences up to this amount (either direction) still count as "Matched".
+MATCH_TOLERANCE = 10.0
+
 
 def compare_with_eta(stage1_df, eta_df):
     eta = eta_df.copy()
@@ -539,7 +542,7 @@ def compare_with_eta(stage1_df, eta_df):
                 2,
             )
 
-            result["Match Status"] = "Matched"
+            result["Match Status"] = "Matched"  # refined below once differences are known
             result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
             result["إجمالى المبيعات"] = eta_sales
             result["ضريبة القيمة المضافة"] = eta_vat
@@ -552,6 +555,17 @@ def compare_with_eta(stage1_df, eta_df):
                 _num(result["SUPPLIERS VAT"]) - eta_vat, 2
             )
             result["Amount Difference"] = round(_num(result["Vendor Invoice Total"]) - eta_total, 2)
+
+            # "Matched" only when every difference is within the tolerance
+            # (up to 10 either way); otherwise the invoice was found in the
+            # portal but its amounts differ.
+            diffs = [
+                result["COGS vs إجمالى المبيعات (Difference)"],
+                result["SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"],
+                result["Amount Difference"],
+            ]
+            if any(abs(d) > MATCH_TOLERANCE for d in diffs):
+                result["Match Status"] = "Difference"
         else:
             result["Match Status"] = "Not Found in Portal"
             result["Vendor Invoice No (Portal Matched)"] = ""
@@ -627,12 +641,14 @@ if "final_df" in st.session_state:
     final_df = st.session_state["final_df"]
 
     matched = (final_df["Match Status"] == "Matched").sum()
+    differences = (final_df["Match Status"] == "Difference").sum()
     not_found = (final_df["Match Status"] == "Not Found in Portal").sum()
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Vendor Invoices", len(final_df))
     c2.metric("Matched with Portal", int(matched))
-    c3.metric("Not Found in Portal", int(not_found))
+    c3.metric("Difference", int(differences))
+    c4.metric("Not Found in Portal", int(not_found))
 
     display_cols = [
         "Vendor Account", "Tax ID", "Sales Invoice",
@@ -645,7 +661,7 @@ if "final_df" in st.session_state:
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
 
     st.markdown("### Results")
-    status_filter = st.selectbox("Filter by status", ["All", "Matched", "Not Found in Portal"])
+    status_filter = st.selectbox("Filter by status", ["All", "Matched", "Difference", "Not Found in Portal"])
     display_df = final_df if status_filter == "All" else final_df[final_df["Match Status"] == status_filter]
     st.dataframe(display_df, use_container_width=True, height=500)
 
@@ -704,6 +720,7 @@ if "final_df" in st.session_state:
 
         matched_fill = PatternFill(start_color="DFF5E9", end_color="DFF5E9", fill_type="solid")
         notfound_fill = PatternFill(start_color="FBE7DA", end_color="FBE7DA", fill_type="solid")
+        difference_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
         status_col_idx = columns.index("Match Status") + 1
 
         numeric_cols = set(columns) - ID_COLS - STATUS_COLS
@@ -711,13 +728,23 @@ if "final_df" in st.session_state:
 
         for row_idx in range(2, ws.max_row + 1):
             status_val = ws.cell(row=row_idx, column=status_col_idx).value
-            row_tint_override = matched_fill if status_val == "Matched" else notfound_fill
+            if status_val == "Matched":
+                row_tint_override = matched_fill
+            elif status_val == "Difference":
+                row_tint_override = difference_fill
+            else:
+                row_tint_override = notfound_fill
             for col_idx, col_name in enumerate(columns, start=1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.border = thin_border
                 if col_name in STATUS_COLS:
                     cell.fill = row_tint_override
-                    cell.font = Font(bold=True, color="1F6B45" if status_val == "Matched" else "A34A1F")
+                    cell.font = Font(
+                        bold=True,
+                        color="1F6B45" if status_val == "Matched"
+                        else "8A6D00" if status_val == "Difference"
+                        else "A34A1F",
+                    )
                 else:
                     _, tint = GROUP_COLORS[group_of(col_name)]
                     cell.fill = PatternFill(start_color=tint, end_color=tint, fill_type="solid")
