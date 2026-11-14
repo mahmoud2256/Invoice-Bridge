@@ -286,6 +286,18 @@ def is_placeholder_invoice(v):
     return False
 
 
+def normalize_invoice_no(v):
+    """Loose form of an invoice number used only as a fallback for matching.
+
+    Ignores spaces, letter case, leading/trailing dots (".375677"), a trailing
+    ".0" added by Excel, and leading zeros ("0202600142" vs "202600142").
+    """
+    s = clean_str(v).replace(" ", "").lower()
+    s = re.sub(r"\.0+$", "", s)
+    s = s.strip(".")
+    return s.lstrip("0")
+
+
 def split_document(doc):
     """Split the 'Document' field into (sales_invoice, vendor_invoice_raw)."""
     doc = clean_str(doc)
@@ -568,9 +580,14 @@ def compare_with_eta(stage1_df, eta_df):
     eta["الرقم الداخلى"] = eta["الرقم الداخلى"].apply(clean_id)
 
     eta_index = {}
+    loose_groups = {}
     for _, row in eta.iterrows():
         key = (row["الرقم الضريبى للبائع"], row["الرقم الداخلى"])
         eta_index[key] = row
+        loose_key = (row["الرقم الضريبى للبائع"], normalize_invoice_no(row["الرقم الداخلى"]))
+        loose_groups.setdefault(loose_key, []).append(row)
+    # loose matching is only used when it points to exactly one portal invoice
+    loose_index = {k: v[0] for k, v in loose_groups.items() if len(v) == 1 and k[1]}
 
     results = []
     for _, row in stage1_df.iterrows():
@@ -578,14 +595,25 @@ def compare_with_eta(stage1_df, eta_df):
         candidates = [row["Vendor Invoice No (Voucher)"], row["Vendor Invoice No (Payment)"]]
         match = None
         matched_invoice_no = ""
+        # 1) exact number, same tax ID
         for cand in candidates:
             if not cand:
                 continue
             key = (tax_id, cand)
             if key in eta_index:
                 match = eta_index[key]
-                matched_invoice_no = cand
                 break
+        # 2) otherwise the loosely-normalised number, still the same tax ID
+        if match is None:
+            for cand in candidates:
+                if not cand:
+                    continue
+                loose_key = (tax_id, normalize_invoice_no(cand))
+                if loose_key in loose_index:
+                    match = loose_index[loose_key]
+                    break
+        if match is not None:
+            matched_invoice_no = match["الرقم الداخلى"]
 
         result = row.to_dict()
         if match is not None:
@@ -646,6 +674,7 @@ def find_portal_only_invoices(stage1_df, eta_df, masterdata_df):
     supplier_tax_ids = {t for t in build_masterdata_lookup(masterdata_df).values() if t}
 
     matched_keys = set()
+    matched_loose_keys = set()
     for _, row in stage1_df.iterrows():
         tax_id = row["Tax ID"]
         numbers = [row["Vendor Invoice No (Payment)"], row["Vendor Invoice No (Voucher)"]]
@@ -654,14 +683,28 @@ def find_portal_only_invoices(stage1_df, eta_df, masterdata_df):
         for n in numbers:
             if n:
                 matched_keys.add((tax_id, n))
+                loose = normalize_invoice_no(n)
+                if loose:
+                    matched_loose_keys.add((tax_id, loose))
 
     eta = eta_df.copy()
     eta["الرقم الضريبى للبائع"] = eta["الرقم الضريبى للبائع"].apply(clean_id)
     eta["الرقم الداخلى"] = eta["الرقم الداخلى"].apply(clean_id)
 
     in_scope = eta["الرقم الضريبى للبائع"].isin(supplier_tax_ids)
+    loose_counts = {}
+    for t, n in zip(eta["الرقم الضريبى للبائع"], eta["الرقم الداخلى"]):
+        k = (t, normalize_invoice_no(n))
+        loose_counts[k] = loose_counts.get(k, 0) + 1
+
+    def _is_matched(t, n):
+        if (t, n) in matched_keys:
+            return True
+        k = (t, normalize_invoice_no(n))
+        return bool(k[1]) and loose_counts[k] == 1 and k in matched_loose_keys
+
     not_matched = [
-        (t, n) not in matched_keys
+        not _is_matched(t, n)
         for t, n in zip(eta["الرقم الضريبى للبائع"], eta["الرقم الداخلى"])
     ]
     portal_only = eta[in_scope & pd.Series(not_matched, index=eta.index)]
