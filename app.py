@@ -461,10 +461,27 @@ def build_masterdata_lookup(df):
     return dict(zip(df["Supplier id"], df["Fiscal code"]))
 
 
+def build_supplier_type_lookup(df):
+    """Vendor account -> "Local" / "International" from the masterdata "Supplier Location" column."""
+    df = df.copy()
+    loc_col = next(
+        (c for c in df.columns if str(c).strip().lower() == "supplier location"), None
+    )
+    if loc_col is None:
+        return {}
+    df["Supplier id"] = df["Supplier id"].apply(clean_id)
+    labels = {"internal": "Local", "external": "International"}
+    return {
+        sid: labels.get(clean_str(loc).lower(), "")
+        for sid, loc in zip(df["Supplier id"], df[loc_col])
+    }
+
+
 def build_stage1_output(voucher_df, payments_df, masterdata_df):
     line_level = process_voucher_transactions(voucher_df)
     payment_lookup = build_payment_lookup(payments_df)
     tax_id_lookup = build_masterdata_lookup(masterdata_df)
+    supplier_type_lookup = build_supplier_type_lookup(masterdata_df)
 
     def lookup_payment(vouchers):
         for v in vouchers:
@@ -511,6 +528,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
             {
                 "Vendor Account": vendor_acc,
                 "Vendor name": "/".join(vendor_names),
+                "Supplier Type": supplier_type_lookup.get(vendor_acc, ""),
                 "Tax ID": tax_id_lookup.get(vendor_acc, ""),
                 "Sales Invoice": sales_invoices,
                 "Vendor Invoice No (Voucher)": "/".join(voucher_nos),
@@ -734,7 +752,7 @@ if "final_df" in st.session_state:
     c4.metric("Not Found in Portal", int(not_found))
 
     display_cols = [
-        "Vendor Account", "Vendor name", "Tax ID", "Sales Invoice",
+        "Vendor Account", "Vendor name", "Supplier Type", "Tax ID", "Sales Invoice",
         "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)", "Vendor Invoice No (Portal Matched)",
         "COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)",
         "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
@@ -744,8 +762,9 @@ if "final_df" in st.session_state:
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
 
     st.markdown("### Results")
-    f1, f2 = st.columns(2)
+    f1, f2, f3 = st.columns(3)
     status_filter = f1.selectbox("Filter by status", ["All", "Matched", "Difference", "Not Found in Portal"])
+    type_filter = f3.selectbox("Filter by supplier type", ["All", "Local", "International", "(No type)"])
     category_options = ["All"] + sorted(
         c for c in final_df["Category"].unique() if c
     ) + ["(No category)"]
@@ -754,6 +773,10 @@ if "final_df" in st.session_state:
     display_df = final_df
     if status_filter != "All":
         display_df = display_df[display_df["Match Status"] == status_filter]
+    if type_filter == "(No type)":
+        display_df = display_df[display_df["Supplier Type"] == ""]
+    elif type_filter != "All":
+        display_df = display_df[display_df["Supplier Type"] == type_filter]
     if category_filter == "(No category)":
         display_df = display_df[display_df["Category"] == ""]
     elif category_filter != "All":
@@ -793,7 +816,7 @@ if "final_df" in st.session_state:
 
         # column groups -> (header color, body tint)
         ID_COLS = {
-            "Vendor Account", "Vendor name", "Tax ID", "Sales Invoice",
+            "Vendor Account", "Vendor name", "Supplier Type", "Tax ID", "Sales Invoice",
             "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)",
             "Vendor Invoice No (Portal Matched)", "Category",
         }
