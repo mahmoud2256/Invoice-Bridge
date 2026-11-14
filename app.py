@@ -343,10 +343,11 @@ def process_voucher_transactions(df):
     df["Vendor account"] = df["Vendor account"].apply(clean_id)
     df["Document"] = df["Document"].apply(clean_str)
     df["Voucher"] = df["Voucher"].apply(clean_str)
-    if "Account name" in df.columns:
-        df["Account name"] = df["Account name"].apply(clean_str)
-    else:
-        df["Account name"] = ""
+    for extra_col in ("Vendor name", "Supplier_Name", "Service_name"):
+        if extra_col in df.columns:
+            df[extra_col] = df[extra_col].apply(clean_str)
+        else:
+            df[extra_col] = ""
     df["Amount in transaction currency"] = pd.to_numeric(
         df["Amount in transaction currency"], errors="coerce"
     ).fillna(0)
@@ -378,13 +379,11 @@ def process_voucher_transactions(df):
         # it is never used to look up the payment reference.
         vouchers_in_group = list(dict.fromkeys(v for v in g["Voucher"] if v))
 
-        # Account names used for the "Service Type" column.
-        cost_names = list(dict.fromkeys(
-            n for n in g.loc[g["Main account"].isin(ACCOUNTS_SALES_AMOUNT), "Account name"] if n
-        ))
-        vendor_names = list(dict.fromkeys(
-            n for n in g.loc[g["Main account"] == ACCOUNT_VENDOR_TOTAL, "Account name"] if n
-        ))
+        # Vendor name; only when the whole group has none, use Supplier_Name.
+        vendor_names = list(dict.fromkeys(n for n in g["Vendor name"] if n))
+        if not vendor_names:
+            vendor_names = list(dict.fromkeys(n for n in g["Supplier_Name"] if n))
+        service_names = list(dict.fromkeys(n for n in g["Service_name"] if n))
 
         rows.append(
             {
@@ -395,8 +394,8 @@ def process_voucher_transactions(df):
                 "Vendor Invoice Total": round(vendor_total, 2),
                 "Vendor Invoice No (Voucher)": voucher_invoice_no,
                 "Vouchers": vouchers_in_group,
-                "Cost Names": cost_names,
                 "Vendor Names": vendor_names,
+                "Service Names": service_names,
             }
         )
 
@@ -410,8 +409,8 @@ def process_voucher_transactions(df):
             "Vendor Invoice Total",
             "Vendor Invoice No (Voucher)",
             "Vouchers",
-            "Cost Names",
             "Vendor Names",
+            "Service Names",
         ],
     )
 
@@ -489,18 +488,13 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
         voucher_nos = list(dict.fromkeys(v for v in g["Vendor Invoice No (Voucher)"] if v))
         payment_nos = [v for v in g["Vendor Invoice No (Payment)"] if v]
 
-        cost_names = list(dict.fromkeys(n for names in g["Cost Names"] for n in names))
         vendor_names = list(dict.fromkeys(n for names in g["Vendor Names"] for n in names))
-        cost_txt = "/".join(cost_names)
-        vendor_txt = "/".join(vendor_names)
-        if cost_txt and vendor_txt:
-            service_type = f"{cost_txt} ({vendor_txt})"
-        else:
-            service_type = cost_txt or vendor_txt
+        service_names = list(dict.fromkeys(n for names in g["Service Names"] for n in names))
 
         final_rows.append(
             {
                 "Vendor Account": vendor_acc,
+                "Vendor name": "/".join(vendor_names),
                 "Tax ID": tax_id_lookup.get(vendor_acc, ""),
                 "Sales Invoice": sales_invoices,
                 "Vendor Invoice No (Voucher)": "/".join(voucher_nos),
@@ -508,7 +502,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
                 "COGS": round(g["Sales Amount"].sum(), 2),
                 "SUPPLIERS VAT": round(g["VAT Amount"].sum(), 2),
                 "Vendor Invoice Total": round(g["Vendor Invoice Total"].sum(), 2),
-                "Service Type": service_type,
+                "Service_name": "/".join(service_names),
             }
         )
 
@@ -532,6 +526,10 @@ PORTAL_FEE_SUBTRACT_COLUMNS = ["خصم الفاتورة", "خصم الأصناف
 
 # Differences up to this amount (either direction) still count as "Matched".
 MATCH_TOLERANCE = 10.0
+
+# True: Service_name is shown only for invoices not found in the portal.
+# False: it is shown for every invoice.
+SERVICE_NAME_ONLY_NOT_FOUND = False
 
 
 def compare_with_eta(stage1_df, eta_df):
@@ -580,7 +578,8 @@ def compare_with_eta(stage1_df, eta_df):
             )
 
             result["Match Status"] = "Matched"  # refined below once differences are known
-            result["Service Type"] = ""  # only filled for invoices not found in the portal
+            if SERVICE_NAME_ONLY_NOT_FOUND:
+                result["Service_name"] = ""
             result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
             result["إجمالى المبيعات"] = eta_sales
             result["ضريبة القيمة المضافة"] = eta_vat
@@ -725,12 +724,12 @@ if "final_df" in st.session_state:
     c4.metric("Not Found in Portal", int(not_found))
 
     display_cols = [
-        "Vendor Account", "Tax ID", "Sales Invoice",
+        "Vendor Account", "Vendor name", "Tax ID", "Sales Invoice",
         "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)", "Vendor Invoice No (Portal Matched)",
         "COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)",
         "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
         "Vendor Invoice Total", "ETA Invoice Total", "Amount Difference",
-        "Match Status", "Service Type",
+        "Match Status", "Service_name",
     ]
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
 
@@ -759,9 +758,9 @@ if "final_df" in st.session_state:
 
         # column groups -> (header color, body tint)
         ID_COLS = {
-            "Vendor Account", "Tax ID", "Sales Invoice",
+            "Vendor Account", "Vendor name", "Tax ID", "Sales Invoice",
             "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)",
-            "Vendor Invoice No (Portal Matched)", "Service Type",
+            "Vendor Invoice No (Portal Matched)", "Service_name",
         }
         COGS_COLS = {"COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)"}
         VAT_COLS = {"SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"}
