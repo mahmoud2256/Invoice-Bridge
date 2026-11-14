@@ -343,7 +343,7 @@ def process_voucher_transactions(df):
     df["Vendor account"] = df["Vendor account"].apply(clean_id)
     df["Document"] = df["Document"].apply(clean_str)
     df["Voucher"] = df["Voucher"].apply(clean_str)
-    for extra_col in ("Vendor name", "Supplier_Name", "Service_name"):
+    for extra_col in ("Vendor name", "Supplier_Name", "Service_name", "Account name"):
         if extra_col in df.columns:
             df[extra_col] = df[extra_col].apply(clean_str)
         else:
@@ -383,7 +383,17 @@ def process_voucher_transactions(df):
         vendor_names = list(dict.fromkeys(n for n in g["Vendor name"] if n))
         if not vendor_names:
             vendor_names = list(dict.fromkeys(n for n in g["Supplier_Name"] if n))
-        service_names = list(dict.fromkeys(n for n in g["Service_name"] if n))
+        # Category: Service_name when it is real text (not just digits, e.g. a
+        # service number); otherwise fall back to the cost account name.
+        service_names = list(dict.fromkeys(
+            n for n in g["Service_name"] if n and not n.replace(" ", "").isdigit()
+        ))
+        if service_names:
+            categories = service_names
+        else:
+            categories = list(dict.fromkeys(
+                n for n in g.loc[g["Main account"].isin(ACCOUNTS_SALES_AMOUNT), "Account name"] if n
+            ))
 
         rows.append(
             {
@@ -395,7 +405,7 @@ def process_voucher_transactions(df):
                 "Vendor Invoice No (Voucher)": voucher_invoice_no,
                 "Vouchers": vouchers_in_group,
                 "Vendor Names": vendor_names,
-                "Service Names": service_names,
+                "Categories": categories,
             }
         )
 
@@ -410,7 +420,7 @@ def process_voucher_transactions(df):
             "Vendor Invoice No (Voucher)",
             "Vouchers",
             "Vendor Names",
-            "Service Names",
+            "Categories",
         ],
     )
 
@@ -489,7 +499,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
         payment_nos = [v for v in g["Vendor Invoice No (Payment)"] if v]
 
         vendor_names = list(dict.fromkeys(n for names in g["Vendor Names"] for n in names))
-        service_names = list(dict.fromkeys(n for names in g["Service Names"] for n in names))
+        categories = list(dict.fromkeys(n for names in g["Categories"] for n in names))
 
         final_rows.append(
             {
@@ -502,7 +512,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
                 "COGS": round(g["Sales Amount"].sum(), 2),
                 "SUPPLIERS VAT": round(g["VAT Amount"].sum(), 2),
                 "Vendor Invoice Total": round(g["Vendor Invoice Total"].sum(), 2),
-                "Service_name": "/".join(service_names),
+                "Category": "/".join(categories),
             }
         )
 
@@ -526,10 +536,6 @@ PORTAL_FEE_SUBTRACT_COLUMNS = ["خصم الفاتورة", "خصم الأصناف
 
 # Differences up to this amount (either direction) still count as "Matched".
 MATCH_TOLERANCE = 10.0
-
-# True: Service_name is shown only for invoices not found in the portal.
-# False: it is shown for every invoice.
-SERVICE_NAME_ONLY_NOT_FOUND = False
 
 
 def compare_with_eta(stage1_df, eta_df):
@@ -578,8 +584,6 @@ def compare_with_eta(stage1_df, eta_df):
             )
 
             result["Match Status"] = "Matched"  # refined below once differences are known
-            if SERVICE_NAME_ONLY_NOT_FOUND:
-                result["Service_name"] = ""
             result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
             result["إجمالى المبيعات"] = eta_sales
             result["ضريبة القيمة المضافة"] = eta_vat
@@ -729,14 +733,39 @@ if "final_df" in st.session_state:
         "COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)",
         "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
         "Vendor Invoice Total", "ETA Invoice Total", "Amount Difference",
-        "Match Status", "Service_name",
+        "Match Status", "Category",
     ]
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
 
     st.markdown("### Results")
-    status_filter = st.selectbox("Filter by status", ["All", "Matched", "Difference", "Not Found in Portal"])
-    display_df = final_df if status_filter == "All" else final_df[final_df["Match Status"] == status_filter]
+    f1, f2 = st.columns(2)
+    status_filter = f1.selectbox("Filter by status", ["All", "Matched", "Difference", "Not Found in Portal"])
+    category_options = ["All"] + sorted(
+        c for c in final_df["Category"].unique() if c
+    ) + ["(No category)"]
+    category_filter = f2.selectbox("Filter by category", category_options)
+
+    display_df = final_df
+    if status_filter != "All":
+        display_df = display_df[display_df["Match Status"] == status_filter]
+    if category_filter == "(No category)":
+        display_df = display_df[display_df["Category"] == ""]
+    elif category_filter != "All":
+        display_df = display_df[display_df["Category"] == category_filter]
     st.dataframe(display_df, use_container_width=True, height=500)
+
+    category_summary = (
+        final_df.assign(Category=final_df["Category"].replace("", "(No category)"))
+        .groupby("Category", as_index=False)
+        .agg(**{
+            "Invoices": ("Vendor Invoice Total", "size"),
+            "Vendor Invoice Total": ("Vendor Invoice Total", "sum"),
+        })
+        .sort_values("Vendor Invoice Total", ascending=False)
+    )
+    category_summary["Vendor Invoice Total"] = category_summary["Vendor Invoice Total"].round(2)
+    st.markdown("### Summary by category")
+    st.dataframe(category_summary, use_container_width=True)
 
     portal_only_df = st.session_state.get("portal_only_df")
     if portal_only_df is not None:
@@ -760,7 +789,7 @@ if "final_df" in st.session_state:
         ID_COLS = {
             "Vendor Account", "Vendor name", "Tax ID", "Sales Invoice",
             "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)",
-            "Vendor Invoice No (Portal Matched)", "Service_name",
+            "Vendor Invoice No (Portal Matched)", "Category",
         }
         COGS_COLS = {"COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)"}
         VAT_COLS = {"SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"}
@@ -843,6 +872,18 @@ if "final_df" in st.session_state:
 
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
+
+        category_summary.to_excel(writer, index=False, sheet_name="Category Summary")
+        ws3 = writer.sheets["Category Summary"]
+        for idx, col_name in enumerate(category_summary.columns, start=1):
+            cell = ws3.cell(row=1, column=idx)
+            cell.fill = PatternFill(start_color="2B3350", end_color="2B3350", fill_type="solid")
+            cell.font = Font(bold=True, color="FFFFFF", size=11)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            ws3.column_dimensions[get_column_letter(idx)].width = 28
+        for r in range(2, ws3.max_row + 1):
+            ws3.cell(row=r, column=3).number_format = "#,##0.00"
+        ws3.freeze_panes = "A2"
 
         if portal_only_df is not None:
             portal_only_df.to_excel(writer, index=False, sheet_name="Portal Only")
