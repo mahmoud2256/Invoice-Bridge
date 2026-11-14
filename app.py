@@ -251,6 +251,26 @@ ACCOUNT_VAT = "21030309"
 ACCOUNTS_SALES_AMOUNT = {"32000001", "32000002", "32000003", "32000004"}
 TARGET_ACCOUNTS = {ACCOUNT_VENDOR_TOTAL, ACCOUNT_VAT} | ACCOUNTS_SALES_AMOUNT
 
+# Vendor account used by international (Non-Air-internatio...) suppliers.
+# Only used to classify the supplier type; it is not part of any calculation.
+ACCOUNT_VENDOR_INTERNATIONAL = "21020103"
+
+# Words in a vendor name that suggest an international supplier. Latin words
+# must match as whole words (so "AIR" matches "NILE AIR" but not "HAIR").
+# Add or remove words here as needed.
+INTERNATIONAL_NAME_WORDS = [
+    # foreign company forms
+    "GMBH", "LTD", "LLC", "INC", "B.V", "BV", "S.A", "PTE", "PLC",
+    # aviation
+    "AIR", "AIRWAYS", "AIRLINES", "AIRLINE", "AVIATION",
+    # cities / countries outside Egypt
+    "ISTANBUL", "TURKEY", "DUBAI", "ABU DHABI", "UAE", "LONDON", "PARIS", "ROME",
+    "MILAN", "BARCELONA", "MADRID", "AMSTERDAM", "BANGKOK", "SINGAPORE", "MALAYSIA",
+    "JEDDAH", "RIYADH", "DOHA", "KUWAIT", "BEIRUT", "AMMAN", "NEW YORK",
+]
+# Arabic words are matched anywhere inside the name.
+INTERNATIONAL_NAME_WORDS_AR = ["طيران"]
+
 PLACEHOLDER_INVOICE_VALUES = {
     "", "NA", "N/A", "N/ A", ".", "000", "0000000000", "NONE", "-",
 }
@@ -473,6 +493,18 @@ def build_masterdata_lookup(df):
     return dict(zip(df["Supplier id"], df["Fiscal code"]))
 
 
+def looks_international_by_name(name):
+    """True when a vendor name contains a word from the international lists."""
+    name = clean_str(name)
+    if not name:
+        return False
+    upper = name.upper()
+    for word in INTERNATIONAL_NAME_WORDS:
+        if re.search(r"(?<![A-Z0-9])" + re.escape(word) + r"(?![A-Z0-9])", upper):
+            return True
+    return any(w in name for w in INTERNATIONAL_NAME_WORDS_AR)
+
+
 def build_supplier_type_lookup(df):
     """Vendor account -> "Local" / "International" from the masterdata "Supplier Location" column."""
     df = df.copy()
@@ -494,6 +526,13 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
     payment_lookup = build_payment_lookup(payments_df)
     tax_id_lookup = build_masterdata_lookup(masterdata_df)
     supplier_type_lookup = build_supplier_type_lookup(masterdata_df)
+
+    # Vendor accounts that have entries on the international vendor account
+    intl_mask = (
+        voucher_df["Main account"].astype(str).str.strip().str.replace(r"\.0+$", "", regex=True)
+        == ACCOUNT_VENDOR_INTERNATIONAL
+    )
+    international_accounts = set(voucher_df.loc[intl_mask, "Vendor account"].apply(clean_id)) - {""}
 
     def lookup_payment(vouchers):
         for v in vouchers:
@@ -536,11 +575,19 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
         vendor_names = list(dict.fromkeys(n for names in g["Vendor Names"] for n in names))
         categories = list(dict.fromkeys(n for names in g["Categories"] for n in names))
 
+        # Supplier type: masterdata first, then the international vendor
+        # account, then (as a hint only) the vendor name.
+        supplier_type = supplier_type_lookup.get(vendor_acc, "")
+        if not supplier_type and vendor_acc in international_accounts:
+            supplier_type = "International"
+        if not supplier_type and looks_international_by_name("/".join(vendor_names)):
+            supplier_type = "International (by name)"
+
         final_rows.append(
             {
                 "Vendor Account": vendor_acc,
                 "Vendor name": "/".join(vendor_names),
-                "Supplier Type": supplier_type_lookup.get(vendor_acc, ""),
+                "Supplier Type": supplier_type,
                 "Tax ID": tax_id_lookup.get(vendor_acc, ""),
                 "Sales Invoice": sales_invoices,
                 "Vendor Invoice No (Voucher)": "/".join(voucher_nos),
@@ -818,6 +865,8 @@ if "final_df" in st.session_state:
         display_df = display_df[display_df["Match Status"] == status_filter]
     if type_filter == "(No type)":
         display_df = display_df[display_df["Supplier Type"] == ""]
+    elif type_filter == "International":
+        display_df = display_df[display_df["Supplier Type"].str.startswith("International")]
     elif type_filter != "All":
         display_df = display_df[display_df["Supplier Type"] == type_filter]
     if category_filter == "(No category)":
