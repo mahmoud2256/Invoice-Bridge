@@ -343,6 +343,10 @@ def process_voucher_transactions(df):
     df["Vendor account"] = df["Vendor account"].apply(clean_id)
     df["Document"] = df["Document"].apply(clean_str)
     df["Voucher"] = df["Voucher"].apply(clean_str)
+    if "Account name" in df.columns:
+        df["Account name"] = df["Account name"].apply(clean_str)
+    else:
+        df["Account name"] = ""
     df["Amount in transaction currency"] = pd.to_numeric(
         df["Amount in transaction currency"], errors="coerce"
     ).fillna(0)
@@ -374,6 +378,14 @@ def process_voucher_transactions(df):
         # it is never used to look up the payment reference.
         vouchers_in_group = list(dict.fromkeys(v for v in g["Voucher"] if v))
 
+        # Account names used for the "Service Type" column.
+        cost_names = list(dict.fromkeys(
+            n for n in g.loc[g["Main account"].isin(ACCOUNTS_SALES_AMOUNT), "Account name"] if n
+        ))
+        vendor_names = list(dict.fromkeys(
+            n for n in g.loc[g["Main account"] == ACCOUNT_VENDOR_TOTAL, "Account name"] if n
+        ))
+
         rows.append(
             {
                 "Sales Invoice": sales_inv,
@@ -383,6 +395,8 @@ def process_voucher_transactions(df):
                 "Vendor Invoice Total": round(vendor_total, 2),
                 "Vendor Invoice No (Voucher)": voucher_invoice_no,
                 "Vouchers": vouchers_in_group,
+                "Cost Names": cost_names,
+                "Vendor Names": vendor_names,
             }
         )
 
@@ -396,6 +410,8 @@ def process_voucher_transactions(df):
             "Vendor Invoice Total",
             "Vendor Invoice No (Voucher)",
             "Vouchers",
+            "Cost Names",
+            "Vendor Names",
         ],
     )
 
@@ -473,6 +489,15 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
         voucher_nos = list(dict.fromkeys(v for v in g["Vendor Invoice No (Voucher)"] if v))
         payment_nos = [v for v in g["Vendor Invoice No (Payment)"] if v]
 
+        cost_names = list(dict.fromkeys(n for names in g["Cost Names"] for n in names))
+        vendor_names = list(dict.fromkeys(n for names in g["Vendor Names"] for n in names))
+        cost_txt = "/".join(cost_names)
+        vendor_txt = "/".join(vendor_names)
+        if cost_txt and vendor_txt:
+            service_type = f"{cost_txt} ({vendor_txt})"
+        else:
+            service_type = cost_txt or vendor_txt
+
         final_rows.append(
             {
                 "Vendor Account": vendor_acc,
@@ -483,6 +508,7 @@ def build_stage1_output(voucher_df, payments_df, masterdata_df):
                 "COGS": round(g["Sales Amount"].sum(), 2),
                 "SUPPLIERS VAT": round(g["VAT Amount"].sum(), 2),
                 "Vendor Invoice Total": round(g["Vendor Invoice Total"].sum(), 2),
+                "Service Type": service_type,
             }
         )
 
@@ -554,6 +580,7 @@ def compare_with_eta(stage1_df, eta_df):
             )
 
             result["Match Status"] = "Matched"  # refined below once differences are known
+            result["Service Type"] = ""  # only filled for invoices not found in the portal
             result["Vendor Invoice No (Portal Matched)"] = matched_invoice_no
             result["إجمالى المبيعات"] = eta_sales
             result["ضريبة القيمة المضافة"] = eta_vat
@@ -585,6 +612,38 @@ def compare_with_eta(stage1_df, eta_df):
         results.append(result)
 
     return pd.DataFrame(results)
+
+
+def find_portal_only_invoices(stage1_df, eta_df, masterdata_df):
+    """ETA portal invoices (for suppliers in the masterdata) with no match in the system."""
+    supplier_tax_ids = {t for t in build_masterdata_lookup(masterdata_df).values() if t}
+
+    matched_keys = set()
+    for _, row in stage1_df.iterrows():
+        tax_id = row["Tax ID"]
+        numbers = [row["Vendor Invoice No (Payment)"], row["Vendor Invoice No (Voucher)"]]
+        # merged rows join several voucher numbers with "/"
+        numbers += [p for p in str(row["Vendor Invoice No (Voucher)"]).split("/")]
+        for n in numbers:
+            if n:
+                matched_keys.add((tax_id, n))
+
+    eta = eta_df.copy()
+    eta["الرقم الضريبى للبائع"] = eta["الرقم الضريبى للبائع"].apply(clean_id)
+    eta["الرقم الداخلى"] = eta["الرقم الداخلى"].apply(clean_id)
+
+    in_scope = eta["الرقم الضريبى للبائع"].isin(supplier_tax_ids)
+    not_matched = [
+        (t, n) not in matched_keys
+        for t, n in zip(eta["الرقم الضريبى للبائع"], eta["الرقم الداخلى"])
+    ]
+    portal_only = eta[in_scope & pd.Series(not_matched, index=eta.index)]
+
+    wanted = [
+        "الرقم الضريبى للبائع", "الرقم الداخلى", "إجمالى الفاتورة",
+        "إجمالى المبيعات", "ضريبة القيمة المضافة",
+    ]
+    return portal_only[[c for c in wanted if c in portal_only.columns]].reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------
@@ -636,7 +695,8 @@ if run_btn:
         eta_df = pd.read_excel(io.BytesIO(eta_file.getvalue()), sheet_name="جميع الفواتير")
 
     with st.spinner("Building system-side reconciliation..."):
-        if process_voucher_transactions(voucher_df).empty:
+        stage1_df = build_stage1_output(voucher_df, payments_df, masterdata_df)
+        if stage1_df.empty:
             st.error(
                 "No rows found in the Voucher Transactions file for the required "
                 "accounts (21020102, 21030309, 32000001-32000004 with a Vendor "
@@ -644,12 +704,12 @@ if run_btn:
                 "this period."
             )
             st.stop()
-        stage1_df = build_stage1_output(voucher_df, payments_df, masterdata_df)
 
     with st.spinner("Comparing against ETA portal..."):
         final_df = compare_with_eta(stage1_df, eta_df)
 
     st.session_state["final_df"] = final_df
+    st.session_state["portal_only_df"] = find_portal_only_invoices(stage1_df, eta_df, masterdata_df)
 
 if "final_df" in st.session_state:
     final_df = st.session_state["final_df"]
@@ -670,7 +730,7 @@ if "final_df" in st.session_state:
         "COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)",
         "SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)",
         "Vendor Invoice Total", "ETA Invoice Total", "Amount Difference",
-        "Match Status",
+        "Match Status", "Service Type",
     ]
     final_df = final_df[[c for c in display_cols if c in final_df.columns]]
 
@@ -678,6 +738,16 @@ if "final_df" in st.session_state:
     status_filter = st.selectbox("Filter by status", ["All", "Matched", "Difference", "Not Found in Portal"])
     display_df = final_df if status_filter == "All" else final_df[final_df["Match Status"] == status_filter]
     st.dataframe(display_df, use_container_width=True, height=500)
+
+    portal_only_df = st.session_state.get("portal_only_df")
+    if portal_only_df is not None:
+        st.markdown("### In the portal but not in the system")
+        st.caption(
+            "ETA invoices of suppliers in the masterdata that did not match any "
+            "invoice number in your system."
+        )
+        st.metric("Portal invoices without a system match", len(portal_only_df))
+        st.dataframe(portal_only_df, use_container_width=True, height=300)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -691,7 +761,7 @@ if "final_df" in st.session_state:
         ID_COLS = {
             "Vendor Account", "Tax ID", "Sales Invoice",
             "Vendor Invoice No (Voucher)", "Vendor Invoice No (Payment)",
-            "Vendor Invoice No (Portal Matched)",
+            "Vendor Invoice No (Portal Matched)", "Service Type",
         }
         COGS_COLS = {"COGS", "إجمالى المبيعات", "Portal Fees & Deductions", "COGS vs إجمالى المبيعات (Difference)"}
         VAT_COLS = {"SUPPLIERS VAT", "ضريبة القيمة المضافة", "SUPPLIERS VAT vs ضريبة القيمة المضافة (Difference)"}
@@ -774,6 +844,17 @@ if "final_df" in st.session_state:
 
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
+
+        if portal_only_df is not None:
+            portal_only_df.to_excel(writer, index=False, sheet_name="Portal Only")
+            ws2 = writer.sheets["Portal Only"]
+            for idx, col_name in enumerate(portal_only_df.columns, start=1):
+                cell = ws2.cell(row=1, column=idx)
+                cell.fill = PatternFill(start_color="2B3350", end_color="2B3350", fill_type="solid")
+                cell.font = Font(bold=True, color="FFFFFF", size=11)
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                ws2.column_dimensions[get_column_letter(idx)].width = 24
+            ws2.freeze_panes = "A2"
 
     st.download_button(
         "Download Excel report",
