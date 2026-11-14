@@ -364,7 +364,13 @@ def process_voucher_transactions(df):
     )
 
     rows = []
-    for (sales_inv, vendor_acc), g in df.groupby(["Sales Invoice", "Vendor account"]):
+    # One group per (sales invoice, vendor account, vendor invoice number): a
+    # single sales invoice can be covered by several vendor invoices, and each
+    # one must be matched against the portal separately. Lines whose vendor
+    # invoice number is blank / a placeholder stay grouped together.
+    for (sales_inv, vendor_acc, _vendor_inv), g in df.groupby(
+        ["Sales Invoice", "Vendor account", "Vendor Invoice (Voucher)"]
+    ):
         vendor_total = abs(g.loc[g["Main account"] == ACCOUNT_VENDOR_TOTAL, "Amount in transaction currency"].sum())
         vat_amount = abs(g.loc[g["Main account"] == ACCOUNT_VAT, "Amount in transaction currency"].sum())
         sales_amount = abs(g.loc[g["Main account"].isin(ACCOUNTS_SALES_AMOUNT), "Amount in transaction currency"].sum())
